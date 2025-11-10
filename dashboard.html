@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>報名現況儀表板</title>
+    <!-- 載入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 載入 Chart.js (用於圖表) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- 使用 Inter 字體 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans TC', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-900">報名現況儀表板</h1>
+            <p class="text-lg text-gray-600">敏捷思維導入教學行政 | 研討會</p>
+        </header>
+
+        <!-- 狀態顯示 -->
+        <div id="loading-state" class="text-center py-10">
+            <p class="text-lg text-blue-600 font-semibold">載入中，請稍候...</p>
+        </div>
+        <div id="error-state" class="hidden text-center p-6 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+            <strong class="font-bold">載入失敗！</strong>
+            <p id="error-text" class="block sm:inline">無法從 Google Sheets 擷取資料。</p>
+        </div>
+
+        <!-- 儀表板內容 (預設隱藏) -->
+        <div id="dashboard-content" class="hidden">
+            <!-- 關鍵指標 (KPIs) -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <!-- 總報名人數 -->
+                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+                    <h2 class="text-sm font-medium text-gray-500 mb-2">總報名人數</h2>
+                    <p id="total-registrations" class="text-4xl font-bold text-blue-600">0</p>
+                </div>
+                <!-- 需要茶水 -->
+                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+                    <h2 class="text-sm font-medium text-gray-500 mb-2">需要茶水點心</h2>
+                    <p id="refreshments-yes" class="text-4xl font-bold text-green-600">0</p>
+                </div>
+                <!-- 不需要茶水 -->
+                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+                    <h2 class="text-sm font-medium text-gray-500 mb-2">不需要茶水點心</h2>
+                    <p id="refreshments-no" class="text-4xl font-bold text-gray-600">0</p>
+                </div>
+            </div>
+
+            <!-- 圖表與列表 -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- 職稱分佈 (圓餅圖) -->
+                <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">職稱分佈</h2>
+                    <div class="h-64 md:h-80 flex items-center justify-center">
+                        <canvas id="title-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- 最新報名名單 -->
+                <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">最新報名名單 (前 10 筆)</h2>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
+                                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">職稱</th>
+                                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">報名時間</th>
+                                </tr>
+                            </thead>
+                            <tbody id="latest-registrations" class="bg-white divide-y divide-gray-200">
+                                <!-- 資料將由 JS 動態填入 -->
+                                <tr><td colspan="3" class="px-4 py-4 text-sm text-gray-500 text-center">尚無資料</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // ⬇⬇⬇ 貼上您在 index.html 中使用的同一個 Apps Script URL ⬇⬇⬇
+            const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzB61hoxq0ky6HldU76UzBZuzkUCkG8FeND0vSXOAU-xyCGfnURXEp9ynb-rL8-YKuY/exec';
+            // ⬆⬆⬆ 貼上您在 index.html 中使用的同一個 Apps Script URL ⬆⬇⬆
+
+            const loadingState = document.getElementById('loading-state');
+            const errorState = document.getElementById('error-state');
+            const errorText = document.getElementById('error-text');
+            const dashboardContent = document.getElementById('dashboard-content');
+            
+            let titleChartInstance = null; // 用於存放 Chart.js 實例
+
+            async function fetchData() {
+                try {
+                    // 加上隨機參數 (cache buster)
+                    const url = SCRIPT_URL + '?v=' + new Date().getTime();
+
+                    // (*** 更改 ***) 重新明確指定 mode: 'cors'
+                    const response = await fetch(url, {
+                        mode: 'cors'
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`伺服器錯誤: ${response.statusText} (${response.status})`);
+                    }
+
+                    const data = await response.json();
+                    
+                    if (data.result === 'error') {
+                        throw new Error(data.message || 'Apps Script 執行失敗');
+                    }
+
+                    // 處理並顯示資料
+                    processData(data);
+
+                    // 顯示儀表板
+                    loadingState.classList.add('hidden');
+                    dashboardContent.classList.remove('hidden');
+
+                } catch (error) {
+                    console.error('Fetch Error:', error);
+                    errorText.textContent = `[Fetch Error] ${error.message}` || '無法載入資料，請檢查 Apps Script 部署設定。';
+                    loadingState.classList.add('hidden');
+                    errorState.classList.remove('hidden');
+                }
+            }
+
+            function processData(data) {
+                if (!data || data.length === 0) {
+                    document.getElementById('total-registrations').textContent = '0';
+                    return;
+                }
+
+                // 1. 更新 KPI 卡片
+                const totalCount = data.length;
+                const refreshmentsYes = data.filter(r => r.refreshments === '是').length;
+                const refreshmentsNo = data.filter(r => r.refreshments === '否').length;
+
+                document.getElementById('total-registrations').textContent = totalCount;
+                document.getElementById('refreshments-yes').textContent = refreshmentsYes;
+                document.getElementById('refreshments-no').textContent = refreshmentsNo;
+
+                // 2. 統計職稱
+                const titleCounts = data.reduce((acc, row) => {
+                    const title = row.title || '未分類';
+                    acc[title] = (acc[title] || 0) + 1;
+                    return acc;
+                }, {});
+
+                // 3. 繪製圓餅圖
+                renderTitleChart(titleCounts);
+
+                // 4. 填入最新報名名單 (最新的在最上面)
+                const latestTableBody = document.getElementById('latest-registrations');
+                const latestEntries = data.slice().reverse().slice(0, 10); // 取最後10筆並反轉
+                
+                latestTableBody.innerHTML = ''; // 清空
+                
+                if (latestEntries.length === 0) {
+                    latestTableBody.innerHTML = '<tr><td colspan="3" class="px-4 py-4 text-sm text-gray-500 text-center">尚無資料</td></tr>';
+                    return;
+                }
+
+                latestEntries.forEach(entry => {
+                    const tr = document.createElement('tr');
+                    // 格式化時間
+                    const timestamp = new Date(entry.timestamp).toLocaleString('zh-TW', { 
+                        year: 'numeric', 
+                        month: '2-digit', 
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                    
+                    tr.innerHTML = `
+                        <td class="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${entry.name}</td>
+                        <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-600">${entry.title}</td>
+                        <td class="px-4 py-4 whitespace-nowPrap text-sm text-gray-600">${timestamp}</td>
+                    `;
+                    latestTableBody.appendChild(tr);
+                });
+            }
+
+            function renderTitleChart(titleData) {
+                const ctx = document.getElementById('title-chart').getContext('2d');
+                
+                if (titleChartInstance) {
+                    titleChartInstance.destroy(); // 銷毀舊圖表
+                }
+                
+                titleChartInstance = new Chart(ctx, {
+                    type: 'doughnut', // 甜甜圈圖
+                    data: {
+                        labels: Object.keys(titleData),
+                        datasets: [{
+                            label: '職稱分佈',
+                            data: Object.values(titleData),
+                            backgroundColor: [
+                                '#3B82F6', // blue-500
+                                '#10B981', // green-500
+                                '#F59E0B', // amber-500
+                                '#EF4444', // red-500
+                                '#8B5CF6', // violet-500
+                                '#6B7280', // gray-500
+                            ],
+                            hoverOffset: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom', // 圖例放底部
+                            }
+                        }
+                    }
+                });
+            }
+
+            // 啟動資料抓取
+            fetchData();
+        });
+    </script>
+</body>
+</html>
